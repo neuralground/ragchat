@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "ragchat"
 version = "0.1.0"
@@ -17,23 +21,24 @@ dependencies = [
     # Vector store
     "chromadb>=0.4.0",
 
-    # Document processing - all essential for RAG functionality
-    "unstructured>=0.10.0",    # Base document handling
-    "pypdf>=3.17.1",           # PDF processing
-    "python-magic>=0.4.27",    # File type detection
-    "pdf2image>=1.16.3",       # PDF image extraction
-    "pytesseract>=0.3.10",     # OCR support
-    "markdown>=3.5.1",         # Markdown processing
-    "docx2txt>=0.8",           # Word document support
-    "pdfminer.six>=20221105",  # Enhanced PDF support
-    "epub2txt>=0.1.4",         # EPUB support
-    "nltk>=3.8.1",             # Text processing
+    # Document processing
+    "unstructured>=0.10.0",
+    "pypdf>=3.17.1",
+    "python-magic>=0.4.27",
+    "pdf2image>=1.16.3",
+    "pytesseract>=0.3.10",
+    "markdown>=3.5.1",
+    "docx2txt>=0.8",
+    "pdfminer.six>=20221105",
+    "epub2txt>=0.1.4",
+    "pypandoc>=1.11",
+    "nltk>=3.8.1",
 
     # CLI and utilities
-    "tqdm>=4.65.0",           # Progress bars
-    "pydantic>=2.0",          # Data validation
-    "typer>=0.9.0",           # CLI interface
-    "rich>=13.3.5",           # Rich text and formatting
+    "tqdm>=4.65.0",
+    "pydantic>=2.0",
+    "typer>=0.9.0",
+    "rich>=13.3.5",
 ]
 
 requires-python = ">=3.8"
@@ -41,10 +46,7 @@ requires-python = ">=3.8"
 [project.scripts]
 ragchat = "ragchat.main:main"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [tool.hatch.metadata]
 allow-direct-references = true
 
+# No custom build hooks needed

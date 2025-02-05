@@ -19,6 +19,16 @@ def initialize_rag(embed_model: str, persist_dir: Optional[str] = None) -> Chrom
         collection_name="ragchat_docs"
     )
 
+def reset_collection(vectorstore: Chroma, embed_model: str, persist_dir: Optional[str] = None) -> Chroma:
+    """Reset and reinitialize the Chroma collection."""
+    try:
+        vectorstore.delete_collection()
+    except Exception:
+        pass  # Collection might not exist
+    
+    # Create a new collection
+    return initialize_rag(embed_model, persist_dir)
+
 def get_next_available_number(vectorstore: Chroma) -> int:
     used_numbers = set()
     results = vectorstore.get(include=['metadatas'])

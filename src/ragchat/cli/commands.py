@@ -64,9 +64,24 @@ def handle_list_command(vectorstore: Chroma) -> str:
         return result
     return "No documents in knowledge base"
 
-def handle_remove_command(vectorstore: Chroma, file_path: str) -> str:
-    """Remove a document from the knowledge base."""
+def handle_remove_command(vectorstore: Chroma, identifier: str) -> str:
+    """Remove a document from the knowledge base using file path or source number in [#] format."""
     try:
+        # Check if identifier uses [#] format
+        if identifier.startswith('[') and ']' in identifier:
+            try:
+                end_bracket = identifier.index(']')
+                source_number = int(identifier[1:end_bracket])
+                # Find the corresponding file path
+                sources = get_numbered_sources(vectorstore)
+                if source_number not in sources:
+                    return f"No document found with source number: {source_number}"
+                file_path = sources[source_number]
+            except (ValueError, IndexError):
+                return "Invalid source number format. Use: /remove [N] or /remove filename"
+        else:
+            file_path = identifier
+            
         results = vectorstore.get(include=['documents', 'metadatas'])
         if results and results['metadatas']:
             indices_to_remove = [
@@ -82,14 +97,19 @@ def handle_remove_command(vectorstore: Chroma, file_path: str) -> str:
     except Exception as e:
         return f"Error removing document: {e}"
 
-def handle_reset_command(vectorstore: Chroma, memory: SimpleMemory) -> Tuple[str, bool]:
+def handle_reset_command(
+    vectorstore: Chroma, 
+    memory: SimpleMemory,
+    config: ChatConfig
+) -> Tuple[str, bool, Optional[Chroma]]:
     """Reset the knowledge base and conversation memory."""
     try:
-        vectorstore.delete_collection()
+        # Reset and reinitialize the collection
+        new_vectorstore = reset_collection(vectorstore, config.embed_model, config.persist_dir)
         memory.clear()
-        return "Knowledge base reset successfully", True
+        return "Knowledge base reset successfully", True, new_vectorstore
     except Exception as e:
-        return f"Error resetting knowledge base: {e}", False
+        return f"Error resetting knowledge base: {e}", False, None
 
 def handle_ask_command(
     query: str,
@@ -133,16 +153,18 @@ def format_qa_response(result: Dict[str, Any]) -> Dict[str, Any]:
     }
     
     if result.get("source_documents"):
-        valid_sources = [
-            (doc.metadata.get("source_number"), doc.metadata.get("source_file"))
-            for doc in result["source_documents"]
-            if doc.metadata.get("source_number") is not None
-            and doc.metadata.get("source_file") is not None
-        ]
+        valid_sources = []
+        for doc in result["source_documents"]:
+            if (doc.metadata.get("source_number") is not None and 
+                doc.metadata.get("source_file") is not None):
+                source = f"[{doc.metadata['source_number']}] {doc.metadata['source_file']}"
+                # Add page number if available
+                if "page_number" in doc.metadata:
+                    source += f" (p.{doc.metadata['page_number']})"
+                valid_sources.append(source)
+        
         if valid_sources:
-            response["source_documents"] = [
-                f"[{num}] {file}" for num, file in sorted(set(valid_sources))
-            ]
+            response["source_documents"] = sorted(set(valid_sources))
     
     return response
 
@@ -155,13 +177,21 @@ def process_command(
     config: ChatConfig
 ) -> Dict[str, Any]:
     """Process a command and return the appropriate response."""
+    
+    # Special handling for reset command to return new vectorstore
+    if command == '/reset':
+        message, success, new_vectorstore = handle_reset_command(vectorstore, memory, config)
+        return {
+            'message': message,
+            'new_vectorstore': new_vectorstore if success else None
+        }
+    
     command_handlers = {
         '/help': lambda: {'message': handle_help_command(config)},
         '/add': lambda: {'message': handle_add_command(vectorstore, args)},
         '/list': lambda: {'message': handle_list_command(vectorstore)},
         '/remove': lambda: {'message': handle_remove_command(vectorstore, args)},
         '/clear': lambda: {'message': 'Conversation history cleared', 'clear_memory': True},
-        '/reset': lambda: {'message': handle_reset_command(vectorstore, memory)[0]},
         '/ask': lambda: handle_ask_command(args, vectorstore, llm, memory, config),
         '/bye': lambda: {'message': 'Goodbye!', 'exit': True}
     }
@@ -170,4 +200,3 @@ def process_command(
     if handler:
         return handler()
     return {'message': f"Unknown command: {command}"}
-

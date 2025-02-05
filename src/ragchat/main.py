@@ -80,46 +80,62 @@ def print_result(result: dict) -> None:
 
 def chat_loop(config: ChatConfig, vectorstore, llm, memory) -> NoReturn:
     """Main chat interaction loop."""
-    try:
-        while True:
-            try:
-                user_input = input(">> ").strip()
-                
-                if not user_input:
-                    continue
-
-                # Parse command and arguments
-                if user_input.startswith('/'):
-                    parts = user_input.split(maxsplit=1)
-                    command = parts[0].lower()
-                    args = parts[1] if len(parts) > 1 else ""
-                else:
-                    command = ""
-                    args = user_input
-
-                # Process command or regular query
-                if command:
-                    result = process_command(command, args, vectorstore, llm, memory, config)
-                else:
-                    result = process_command('/ask', args, vectorstore, llm, memory, config)
-
-                # Handle special cases
-                if result.get('exit'):
-                    break
-                if result.get('clear_memory'):
-                    memory.clear()
-                
-                print_result(result)
-
-            except KeyboardInterrupt:
-                print("\nUse /bye to exit")
+    while True:
+        try:
+            user_input = input(">> ").strip()
+            
+            if not user_input:
                 continue
-            except Exception as e:
-                print(f"Error: {e}")
-                if config.debug:
-                    import traceback
-                    print(traceback.format_exc())
 
+            # Parse command and arguments
+            if user_input.startswith('/'):
+                parts = user_input.split(maxsplit=1)
+                command = parts[0].lower()
+                args = parts[1] if len(parts) > 1 else ""
+            else:
+                command = ""
+                args = user_input
+
+            # Process command or regular query
+            if command:
+                result = process_command(command, args, vectorstore, llm, memory, config)
+            else:
+                result = process_command('/ask', args, vectorstore, llm, memory, config)
+
+            # Handle special cases
+            if result.get('exit'):
+                break
+            if result.get('clear_memory'):
+                memory.clear()
+            if result.get('new_vectorstore'):  # Handle vectorstore update
+                vectorstore = result['new_vectorstore']
+                setup_readline(vectorstore)  # Update readline completer with new vectorstore
+            
+            print_result(result)
+
+        except KeyboardInterrupt:
+            print("\nUse /bye to exit")
+            continue
+        except Exception as e:
+            print(f"Error: {e}")
+            if config.debug:
+                import traceback
+                print(traceback.format_exc())
+
+def main():
+    """Application entry point."""
+    try:
+        # Parse command line arguments
+        config = parse_args()
+        
+        # Initialize components
+        vectorstore, llm, memory = initialize_components(config)
+        
+        # Setup readline completion
+        setup_readline(vectorstore)
+        
+        # Enter main chat loop
+        chat_loop(config, vectorstore, llm, memory)
     except Exception as e:
         print(f"Fatal error: {e}")
         if config.debug:
@@ -127,20 +143,5 @@ def chat_loop(config: ChatConfig, vectorstore, llm, memory) -> NoReturn:
             print(traceback.format_exc())
         sys.exit(1)
 
-def main():
-    """Application entry point."""
-    # Parse command line arguments
-    config = parse_args()
-    
-    # Initialize components
-    vectorstore, llm, memory = initialize_components(config)
-    
-    # Setup readline completion
-    setup_readline(vectorstore)
-    
-    # Enter main chat loop
-    chat_loop(config, vectorstore, llm, memory)
-
 if __name__ == "__main__":
     main()
-

@@ -39,12 +39,36 @@ class FileCompleter:
             elif line_buffer.startswith('/remove '):
                 prefix = line_buffer.split(' ', 1)[1].lstrip()
                 loaded_docs = self.get_loaded_documents()
-                responses = ['/remove ' + f for f in loaded_docs if f.startswith(prefix)]
+                responses = []
+                
+                # Handle [#] format completion
+                if prefix.startswith('[') or not prefix:
+                    try:
+                        sources = {}
+                        results = self.vectorstore.get(include=['metadatas'])
+                        if results and results['metadatas']:
+                            for metadata in results['metadatas']:
+                                if 'source_number' in metadata:
+                                    sources[metadata['source_number']] = None
+                        
+                        num_prefix = prefix[1:] if prefix.startswith('[') else ''
+                        num_responses = ['/remove [' + str(num) + ']' for num in sorted(sources.keys())
+                                    if str(num).startswith(num_prefix)]
+                        responses.extend(num_responses)
+                    except Exception:
+                        pass
+                
+                # Handle filename completion
+                if not prefix.startswith('['):
+                    file_responses = ['/remove ' + f for f in loaded_docs if f.startswith(prefix)]
+                    responses.extend(file_responses)
+                
+                responses = sorted(responses)
             else:
                 responses = []
             
             return responses[state] if state < len(responses) else None
-            
+        
         except Exception:
             return None
-
+        

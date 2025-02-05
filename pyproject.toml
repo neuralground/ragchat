@@ -1,0 +1,50 @@
+[project]
+name = "ragchat"
+version = "0.1.0"
+description = "A RAG-based chatbot using local LLMs"
+authors = [
+    {name = "Bob Blainey", email = "bob@neuralground.group"}
+]
+
+dependencies = [
+    # LangChain ecosystem
+    "langchain>=0.1.0",
+    "langchain-community>=0.0.10",
+    "langchain-core>=0.1.0",
+    "langchain-chroma>=0.0.1",
+    "langchain-ollama>=0.0.1",
+
+    # Vector store
+    "chromadb>=0.4.0",
+
+    # Document processing - all essential for RAG functionality
+    "unstructured>=0.10.0",    # Base document handling
+    "pypdf>=3.17.1",           # PDF processing
+    "python-magic>=0.4.27",    # File type detection
+    "pdf2image>=1.16.3",       # PDF image extraction
+    "pytesseract>=0.3.10",     # OCR support
+    "markdown>=3.5.1",         # Markdown processing
+    "docx2txt>=0.8",           # Word document support
+    "pdfminer.six>=20221105",  # Enhanced PDF support
+    "epub2txt>=0.1.4",         # EPUB support
+    "nltk>=3.8.1",             # Text processing
+
+    # CLI and utilities
+    "tqdm>=4.65.0",           # Progress bars
+    "pydantic>=2.0",          # Data validation
+    "typer>=0.9.0",           # CLI interface
+    "rich>=13.3.5",           # Rich text and formatting
+]
+
+requires-python = ">=3.8"
+
+[project.scripts]
+ragchat = "ragchat.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+

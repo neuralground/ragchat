@@ -24,16 +24,13 @@ def get_default_base_dir() -> Path:
 class ChatConfig:
     model: str = "mistral-small:24b"
     embed_model: str = "nomic-embed-text"
-    persist_dir: str = None  # Will be set in __post_init__
+    persist_dir: str = None
     nofallback: bool = False
     debug: bool = False
+    show_thoughts: bool = False  # New option
     
     def __post_init__(self):
         if self.persist_dir is None:
-            # Use default location under base directory
             base_dir = get_default_base_dir()
             self.persist_dir = str(base_dir / "chroma_db")
-        
-        # Ensure persist directory exists
         Path(self.persist_dir).mkdir(parents=True, exist_ok=True)
-

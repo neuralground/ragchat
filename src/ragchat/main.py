@@ -9,6 +9,7 @@ from .document.vectorstore import initialize_rag
 from .chat.memory import SimpleMemory
 from .cli.completer import FileCompleter
 from .cli.commands import process_command
+from .cli.spinner import ThinkingSpinner
 
 def parse_args() -> ChatConfig:
     """Parse command line arguments and return ChatConfig."""
@@ -37,14 +38,19 @@ def parse_args() -> ChatConfig:
         action='store_true',
         help='Enable debug logging'
     )
-
+    parser.add_argument(
+        '--show-thoughts',
+        action='store_true',
+        help='Show model chain-of-thought when present'
+    )
     args = parser.parse_args()
     return ChatConfig(
         model=args.model,
         embed_model=args.embed_model,
-        persist_dir=args.persist_dir,  # Will use default if None
+        persist_dir=args.persist_dir,
         nofallback=args.nofallback,
-        debug=args.debug
+        debug=args.debug,
+        show_thoughts=args.show_thoughts
     )
 
 def setup_readline(vectorstore) -> None:
@@ -64,13 +70,15 @@ def initialize_components(config: ChatConfig):
     memory = SimpleMemory(max_tokens=5)
     return vectorstore, llm, memory
 
-def print_result(result: dict) -> None:
+def print_result(result: dict, config: ChatConfig) -> None:
     """Print command result with proper formatting."""
     if "error" in result:
         print(f"\nError: {result['error']}")
         return
 
     if "answer" in result:
+        if config.show_thoughts and "thoughts" in result:
+            print(f"\nThoughts: {result['thoughts']}")
         print(f"\n{result['answer']}")
         if result.get("source_documents"):
             print("\nSources:", ", ".join(result["source_documents"]))
@@ -79,7 +87,7 @@ def print_result(result: dict) -> None:
         print(result["message"])
 
 def chat_loop(config: ChatConfig, vectorstore, llm, memory) -> NoReturn:
-    """Main chat interaction loop."""
+    spinner = ThinkingSpinner()
     while True:
         try:
             user_input = input(">> ").strip()
@@ -87,7 +95,6 @@ def chat_loop(config: ChatConfig, vectorstore, llm, memory) -> NoReturn:
             if not user_input:
                 continue
 
-            # Parse command and arguments
             if user_input.startswith('/'):
                 parts = user_input.split(maxsplit=1)
                 command = parts[0].lower()
@@ -96,22 +103,21 @@ def chat_loop(config: ChatConfig, vectorstore, llm, memory) -> NoReturn:
                 command = ""
                 args = user_input
 
-            # Process command or regular query
-            if command:
-                result = process_command(command, args, vectorstore, llm, memory, config)
-            else:
-                result = process_command('/ask', args, vectorstore, llm, memory, config)
+            with spinner:  # Show spinner while processing
+                if command:
+                    result = process_command(command, args, vectorstore, llm, memory, config)
+                else:
+                    result = process_command('/ask', args, vectorstore, llm, memory, config)
 
-            # Handle special cases
-            if result.get('exit'):
-                break
-            if result.get('clear_memory'):
-                memory.clear()
-            if result.get('new_vectorstore'):  # Handle vectorstore update
-                vectorstore = result['new_vectorstore']
-                setup_readline(vectorstore)  # Update readline completer with new vectorstore
+                if result.get('exit'):
+                    break
+                if result.get('clear_memory'):
+                    memory.clear()
+                if result.get('new_vectorstore'):
+                    vectorstore = result['new_vectorstore']
+                    setup_readline(vectorstore)
             
-            print_result(result)
+            print_result(result, config)  # Pass config to print_result
 
         except KeyboardInterrupt:
             print("\nUse /bye to exit")

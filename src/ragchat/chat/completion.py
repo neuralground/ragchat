@@ -291,73 +291,136 @@ Answer:""")
             }
 
 def qa_with_images(prompt: str, image_sources: List[Dict], llm: BaseChatModel, config: ChatConfig) -> str:
-    """Process a query with both text and images using the OpenAI API."""
+    """Process a query with both text and images using the OpenAI API or Ollama API."""
     
-    # Check if the model supports image processing
-    if not config.model.startswith("gpt-4"):
-        raise ValueError(f"Model {config.model} does not support image processing. Use GPT-4o or another vision-capable model.")
+    # Check if the model supports image processing based on provider
+    provider = config.provider.lower() if config.provider else ""
     
-    # Prepare the messages
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant that can analyze both text and images."},
-        {"role": "user", "content": []}
-    ]
-    
-    # Add the text prompt
-    messages[1]["content"].append({"type": "text", "text": prompt})
-    
-    # Add the images
-    for img_source in image_sources:
-        path = img_source["path"]
+    if provider == "openai":
+        # For OpenAI, only GPT-4 models support vision
+        if not config.model.startswith("gpt-4"):
+            raise ValueError(f"Model {config.model} does not support image processing. Use GPT-4o or another vision-capable model.")
         
-        # Convert WebP to PNG if needed
-        if path.lower().endswith('.webp'):
-            try:
-                from PIL import Image
-                img = Image.open(path)
-                png_path = path.rsplit('.', 1)[0] + '.png'
-                img.save(png_path, 'PNG')
-                path = png_path
-            except Exception as e:
-                # If conversion fails, try to use the original format
-                pass
+        # Prepare the messages
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that can analyze both text and images."},
+            {"role": "user", "content": []}
+        ]
         
-        # Encode the image
-        with open(path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+        # Add the text prompt
+        messages[1]["content"].append({"type": "text", "text": prompt})
         
-        # Add the image to the message
-        image_url = f"data:image/{'png' if path.lower().endswith('.png') else 'jpeg'};base64,{base64_image}"
-        messages[1]["content"].append({
-            "type": "image_url",
-            "image_url": {
-                "url": image_url
-            }
-        })
-    
-    # Create a client
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-    
-    # Call the API
-    try:
-        response = client.chat.completions.create(
-            model=config.model,
-            messages=[
-                {"role": msg["role"], "content": msg["content"]}
-                for msg in messages
-            ],
-            max_tokens=config.max_tokens or 2000,
-            temperature=config.temperature or 0.7
-        )
+        # Add the images
+        for img_source in image_sources:
+            path = img_source["path"]
+            
+            # Convert WebP to PNG if needed
+            if path.lower().endswith('.webp'):
+                try:
+                    from PIL import Image
+                    img = Image.open(path)
+                    png_path = path.rsplit('.', 1)[0] + '.png'
+                    img.save(png_path, 'PNG')
+                    path = png_path
+                except Exception:
+                    # If conversion fails, try to use the original format
+                    pass
+            
+            # Encode the image
+            with open(path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+            
+            # Add the image to the message
+            image_url = f"data:image/{'png' if path.lower().endswith('.png') else 'jpeg'};base64,{base64_image}"
+            messages[1]["content"].append({
+                "type": "image_url",
+                "image_url": {
+                    "url": image_url
+                }
+            })
         
-        # Extract the content
-        if hasattr(response, 'choices') and len(response.choices) > 0:
-            content = response.choices[0].message.content
-            if content is not None:
-                return content
+        # Create a client
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        
+        # Call the API
+        try:
+            response = client.chat.completions.create(
+                model=config.model,
+                messages=[
+                    {"role": msg["role"], "content": msg["content"]}
+                    for msg in messages
+                ],
+                max_tokens=config.max_tokens or 2000,
+                temperature=config.temperature or 0.7
+            )
+            
+            # Extract the content
+            if hasattr(response, 'choices') and len(response.choices) > 0:
+                content = response.choices[0].message.content
+                if content is not None:
+                    return content
+                else:
+                    return "No response content received from the model."
             else:
-                return "No response content received from the model."
-        else:
-            return "No valid response received from the model."
-    except Exception as e:
-        return f"Error calling OpenAI API: {str(e)}"
+                return "No valid response received from the model."
+        except Exception as e:
+            return f"Error calling OpenAI API: {str(e)}"
+            
+    elif provider == "ollama":
+        # For Ollama, we need to use a different approach
+        try:
+            import ollama
+            
+            # Prepare the message
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that can analyze both text and images."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+            
+            # Add images as separate messages
+            for img_source in image_sources:
+                path = img_source["path"]
+                
+                # Convert WebP to PNG if needed
+                if path.lower().endswith('.webp'):
+                    try:
+                        from PIL import Image
+                        img = Image.open(path)
+                        png_path = path.rsplit('.', 1)[0] + '.png'
+                        img.save(png_path, 'PNG')
+                        path = png_path
+                    except Exception:
+                        # If conversion fails, try to use the original format
+                        pass
+                
+                # Add image as a separate message with file path
+                messages.append({
+                    "role": "user",
+                    "content": "",
+                    "images": [path]
+                })
+            
+            # Call the Ollama API
+            response = ollama.chat(
+                model=config.model,
+                messages=messages,
+                options={
+                    "temperature": config.temperature or 0.7,
+                }
+            )
+            
+            # Extract the content
+            if response and "message" in response and "content" in response["message"]:
+                return response["message"]["content"]
+            else:
+                return "No valid response received from the model."
+        except Exception as e:
+            return f"Error calling Ollama API: {str(e)}"
+    else:
+        raise ValueError(f"Provider {provider} does not support image processing or is not recognized.")

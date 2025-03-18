@@ -132,14 +132,31 @@ All settings are optional and will fall back to application defaults if not spec
 
 ## Commands
 
-- `/help` - Display help message
+### Chat Commands
+
+Once you're in the chat interface, you can use the following commands:
+
+- `/help` - Display help information
 - `/add <file>` - Add a document to the knowledge base
-- `/list` - List loaded documents
-- `/remove <file>` - Remove a document
-- `/reset` - Clear all documents
+- `/list` - List all documents in the knowledge base
+- `/remove <file>` - Remove a document from the knowledge base
+- `/reset` - Remove all documents from the knowledge base
 - `/clear` - Clear conversation history
-- `/ask [N] <question>` - Ask question (optionally from specific source N)
-- `/bye` - Exit
+- `/ask [N] <question>` - Ask a question to a specific source N (use [0] for model knowledge only)
+- `/with [source1,source2,...] prompt` - Include entire source documents in the context
+- `/bye` - Exit the chat
+
+#### Using the `/with` Command
+
+The `/with` command allows you to include entire source documents in the context of the model rather than using RAG. This is useful when you want the model to have access to the full content of specific documents.
+
+Syntax: `/with [source1,source2,...] prompt`
+
+Examples:
+- `/with [1,2] what is the expected lifespan of an albatross?` - Includes the full text of sources 1 and 2 in the context
+- `/with [3,4,5] which of these pictures is unlike the other two?` - If sources 3, 4, and 5 are images, includes them in the request (only works with models that support image input, such as GPT-4o)
+
+Note: Image support is currently only available with OpenAI's GPT-4o models.
 
 ## Development
 

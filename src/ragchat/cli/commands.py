@@ -9,8 +9,10 @@ import logging
 from langchain_core.language_models import BaseChatModel
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_core.messages import SystemMessage, HumanMessage
+from typing import Dict, List, Optional, Any, Tuple
 
-from ..chat.completion import qa_chain_with_fallback, get_numbered_sources
+from ..chat.completion import qa_chain_with_fallback, get_numbered_sources, suppress_stdout, qa_with_images, extract_thoughts
 from ..chat.memory import SimpleMemory
 from ..config import ChatConfig, RAGCHAT_HOME_ENV
 from ..document.loader import (
@@ -44,6 +46,7 @@ Available commands:
   /clear         - Clear conversation history
   /ask [N] <question> - Ask question to specific source N
                   Use [0] to force answer from model knowledge only
+  /with [source1,source2,...] prompt - Include entire source documents in the context
   /bye           - Exit the chat
 
 Environment Variables:
@@ -107,6 +110,26 @@ def handle_add_command(vectorstore: Chroma, file_path: str) -> str:
         
         # Add chunks to vectorstore with progress bar
         with tqdm(total=total_chunks, desc=desc, leave=True) as pbar_chunks:
+            # For images, we need to ensure they're added properly
+            if content_type == "image":
+                # Make sure we have at least one chunk for the image
+                if total_chunks == 0:
+                    # Create a minimal document if no chunks were created
+                    image_doc = Document(
+                        page_content=f"Image file: {os.path.basename(file_path)}",
+                        metadata={
+                            "source": file_path,
+                            "source_file": file_path,
+                            "source_number": source_number,
+                            "content_type": "image",
+                            "doc_type": file_type,
+                            "file_size": doc_info.get("file_size", 0)
+                        }
+                    )
+                    chunks = [image_doc]
+                    total_chunks = 1
+            
+            # Add documents in batches
             for i in range(0, total_chunks, 100):
                 batch = chunks[i:i + 100]
                 vectorstore.add_documents(batch)
@@ -122,7 +145,9 @@ def handle_add_command(vectorstore: Chroma, file_path: str) -> str:
         
         return message
     except Exception as e:
-        return f"Error: {e}"
+        import traceback
+        traceback.print_exc()
+        return f"Error adding document: {str(e)}"
 
 def handle_list_command(vectorstore: Chroma) -> str:
     """List all documents in the knowledge base with enhanced information."""
@@ -145,7 +170,11 @@ def handle_list_command(vectorstore: Chroma) -> str:
                         'file_size': metadata.get('file_size', 0),
                         'chunk_count': 0,
                         'content': [],
-                        'doc_title': metadata.get('doc_title', '')
+                        'doc_title': metadata.get('doc_title', ''),
+                        # Add image-specific metadata
+                        'image_width': metadata.get('image_width', 0),
+                        'image_height': metadata.get('image_height', 0),
+                        'image_format': metadata.get('image_format', '')
                     }
                 
                 # Count chunks for this source
@@ -181,6 +210,15 @@ def handle_list_command(vectorstore: Chroma) -> str:
         
         # Format the output
         result += f"[{idx}] {source}\n"
+        
+        # For images, include dimensions if available
+        if content_type == 'image':
+            width = meta.get('image_width', 0)
+            height = meta.get('image_height', 0)
+            img_format = meta.get('image_format', '')
+            if width and height:
+                doc_type = f"{img_format} image ({width}x{height})"
+        
         result += f"    Type: {doc_type}, Size: {size_str}, Chunks: {chunk_count}\n"
         if title:
             result += f"    Title: {title}\n"
@@ -407,6 +445,203 @@ def format_qa_response(result: Dict[str, Any]) -> Dict[str, Any]:
     
     return response
 
+def handle_with_command(
+    query: str,
+    vectorstore: Chroma,
+    llm: BaseChatModel,
+    memory: SimpleMemory,
+    config: ChatConfig
+) -> Dict[str, Any]:
+    """Handle the /with command to include entire source documents in the context.
+    
+    Syntax: /with [source1,source2,...] prompt
+    """
+    try:
+        # Extract source IDs and actual query
+        pattern = r'^\s*\[([0-9,\s]+)\]\s*(.+)$'
+        match = re.match(pattern, query)
+        if not match:
+            return {"error": "Invalid format. Use '/with [source_ids] your query'"}
+        
+        source_ids_str, actual_query = match.groups()
+        source_ids = [int(s.strip()) for s in source_ids_str.split(',')]
+        
+        # Collect sources
+        sources = []
+        image_sources = []
+        
+        for source_id in source_ids:
+            # Check if the source exists in the vector store
+            metadata = get_source_metadata(vectorstore, source_id)
+            if not metadata:
+                return {"error": f"Source {source_id} not found in the vector store."}
+            
+            # Check if it's an image
+            if metadata.get('content_type') == 'image':
+                # Get the image path
+                source_file = metadata.get('source_file')
+                if not source_file:
+                    return {"error": f"Source file not found for image source {source_id}."}
+                
+                # Resolve the image path
+                image_path_tuple = resolve_image_path(source_file)
+                image_path, exists = image_path_tuple
+                
+                # Check if the image exists
+                if not exists:
+                    return {"error": f"Image file not found at path: {image_path}"}
+                
+                # Add to image sources
+                image_sources.append({"id": source_id, "path": image_path})
+            else:
+                # Get the document from the vector store
+                docs = vectorstore.get(where={"source_number": source_id}, include=["documents", "metadatas"])
+                if not docs or not docs['documents']:
+                    return {"error": f"Source {source_id} not found in the vector store."}
+                
+                # Add to sources
+                sources.extend(docs['documents'])
+        
+        # Build the full prompt
+        full_prompt = "\nThe following images are also provided:\n"
+        for i, img in enumerate(image_sources):
+            full_prompt += f"Image [{img['id']}]\n"
+        
+        for i, source in enumerate(sources):
+            full_prompt += f"\nSource [{i+1}]:\n{source}\n"
+        
+        full_prompt += f"\n\nQuestion: {actual_query}"
+        
+        # If we have image sources, use the image-enabled model
+        if image_sources:
+            try:
+                # Process with the OpenAI API directly
+                response = qa_with_images(full_prompt, image_sources, llm, config)
+                
+                try:
+                    # Extract thoughts if present (but don't try to access .get on a string)
+                    thoughts = None
+                    answer = response
+                    
+                    # Save the response to memory
+                    memory.save_context({"input": actual_query}, {"output": answer})
+                    
+                    # Return a dictionary instead of a string
+                    return {
+                        "answer": answer,
+                        "thoughts": thoughts
+                    }
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    return {"error": f"Error processing images: {str(e)}"}
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return {"error": f"Error in handle_with_command: {str(e)}"}
+        else:
+            # Process with text sources only
+            context = "\n\n".join(sources)
+            
+            try:
+                response = llm.invoke(
+                    [
+                        SystemMessage(content="You are a helpful assistant."),
+                        HumanMessage(content=f"Context:\n{context}\n\nQuestion: {actual_query}")
+                    ]
+                ).content
+                
+                # Try to convert response to string if it's not already
+                try:
+                    if not isinstance(response, str):
+                        response = str(response)
+                except Exception:
+                    pass
+                
+                # At this point, response should be a string
+                # We'll skip the extract_thoughts call entirely for text-only responses
+                answer = response
+                thoughts = None
+                
+                memory.save_context({"input": actual_query}, {"output": answer})
+                
+                # Return a dictionary instead of a string
+                return {
+                    "answer": answer,
+                    "thoughts": thoughts
+                }
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return {"error": f"Error in handle_with_command: {str(e)}"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": f"Error in handle_with_command: {str(e)}"}
+
+def get_source_metadata(vectorstore, source_id):
+    """Get metadata for a specific source ID from the vector store."""
+    try:
+        # Query the vector store for the specific source ID
+        results = vectorstore.get(
+            where={"source_number": source_id},
+            include=["metadatas"]
+        )
+        
+        # Check if we got any results
+        if results and results['metadatas'] and len(results['metadatas']) > 0:
+            return results['metadatas'][0]
+        return None
+    except Exception as e:
+        print(f"Error retrieving metadata for source {source_id}: {str(e)}")
+        return None
+
+def resolve_image_path(source_file):
+    """Resolve a potentially relative image path to an absolute path.
+    
+    Args:
+        source_file: The source file path to resolve
+        
+    Returns:
+        tuple: (resolved_path, exists_flag)
+    """
+    # If already absolute, check if it exists
+    if os.path.isabs(source_file):
+        return source_file, os.path.exists(source_file)
+    
+    # Try to resolve as relative to current directory
+    abs_path = os.path.abspath(source_file)
+    if os.path.exists(abs_path):
+        return abs_path, True
+    
+    # Try to resolve as relative to home directory
+    if source_file.startswith('~'):
+        home_path = os.path.expanduser(source_file)
+        if os.path.exists(home_path):
+            return home_path, True
+    else:
+        # Try with home directory
+        home_path = os.path.expanduser("~")
+        home_relative = os.path.join(home_path, source_file.lstrip('/'))
+        if os.path.exists(home_relative):
+            return home_relative, True
+    
+    # Try a few common directories
+    common_dirs = [
+        os.path.expanduser("~/Downloads"),
+        os.path.expanduser("~/Documents"),
+        os.path.expanduser("~/Pictures"),
+        os.getcwd()
+    ]
+    
+    for directory in common_dirs:
+        test_path = os.path.join(directory, os.path.basename(source_file))
+        if os.path.exists(test_path):
+            return test_path, True
+    
+    # If we get here, we couldn't find the file
+    return abs_path, False
+
 def process_command(
     command: str,
     args: str,
@@ -432,6 +667,7 @@ def process_command(
         '/remove': lambda: {'message': handle_remove_command(vectorstore, args)},
         '/clear': lambda: {'message': 'Conversation history cleared', 'clear_memory': True},
         '/ask': lambda: handle_ask_command(args, vectorstore, llm, memory, config),
+        '/with': lambda: handle_with_command(args, vectorstore, llm, memory, config),
         '/bye': lambda: {'message': 'Goodbye!', 'exit': True}
     }
     

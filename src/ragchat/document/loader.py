@@ -46,6 +46,10 @@ class ImageLoader:
             # Extract text from the image using OCR
             text = pytesseract.image_to_string(image)
             
+            # If text is empty or very short, use a placeholder
+            if not text or len(text.strip()) < 10:
+                text = f"Image file: {os.path.basename(self.file_path)}"
+            
             # Get image metadata
             width, height = image.size
             format_type = image.format
@@ -199,6 +203,22 @@ def ensure_nltk_data():
 
 def split_documents(documents: List[Document]) -> List[Document]:
     """Split documents into chunks, with fallback if NLTK is unavailable."""
+    # First, separate image documents from text documents
+    image_documents = []
+    text_documents = []
+    
+    for doc in documents:
+        if doc.metadata.get("content_type") == "image":
+            # Don't split image documents
+            image_documents.append(doc)
+        else:
+            text_documents.append(doc)
+    
+    # If we only have image documents, return them as is
+    if not text_documents:
+        return image_documents
+    
+    # Process text documents
     text_splitter = None
     
     if ensure_nltk_data():
@@ -219,14 +239,17 @@ def split_documents(documents: List[Document]) -> List[Document]:
         )
     
     try:
-        return text_splitter.split_documents(documents)
+        split_text_docs = text_splitter.split_documents(text_documents)
+        # Combine split text documents with unsplit image documents
+        return image_documents + split_text_docs
     except Exception as e:
         print(f"Warning: Document splitting error: {e}", file=sys.stderr)
         # If splitting fails, try with simpler settings
-        return RecursiveCharacterTextSplitter(
+        split_text_docs = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50,
             separators=[" ", ""],
             length_function=len,
             is_separator_regex=False
-        ).split_documents(documents)
+        ).split_documents(text_documents)
+        return image_documents + split_text_docs

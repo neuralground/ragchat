@@ -135,8 +135,15 @@ def initialize_components(config: ChatConfig):
     memory = SimpleMemory(max_tokens=5)
     return vectorstore, llm, memory
 
-def print_result(result: dict, config: ChatConfig) -> None:
-    """Print command result with proper formatting."""
+def print_result(result, config: ChatConfig) -> None:
+    """Print the result of a command or query."""
+    # Handle string results
+    if isinstance(result, str):
+        print(f"\n{result}")
+        print()
+        return
+        
+    # Handle error results
     if "error" in result:
         print(f"\nError: {result['error']}")
         return
@@ -176,13 +183,15 @@ def chat_loop(config: ChatConfig, vectorstore, llm, memory) -> NoReturn:
                 else:
                     result = process_command('/ask', args, vectorstore, llm, memory, config)
 
-                if result.get('exit'):
-                    break
-                if result.get('clear_memory'):
-                    memory.clear()
-                if result.get('new_vectorstore'):
-                    vectorstore = result['new_vectorstore']
-                    setup_readline(vectorstore)
+                # Check if result is a dictionary or a string
+                if isinstance(result, dict):
+                    if result.get('exit'):
+                        break
+                    if result.get('clear_memory'):
+                        memory.clear()
+                    if result.get('new_vectorstore'):
+                        vectorstore = result['new_vectorstore']
+                        setup_readline(vectorstore)
             
             print_result(result, config)  # Pass config to print_result
 
